@@ -81,18 +81,6 @@ int crypt_parse_name_and_mode(const char *s, char *cipher, int *key_nums,
 	return -EINVAL;
 }
 
-/*
- * Replacement for memset(s, 0, n) on stack that can be optimized out
- * Also used in safe allocations for explicit memory wipe.
- */
-void crypt_memzero(void *s, size_t n)
-{
-	volatile uint8_t *p = (volatile uint8_t *)s;
-
-	while(n--)
-		*p++ = 0;
-}
-
 /* safe allocations */
 void *crypt_safe_alloc(size_t size)
 {
@@ -106,7 +94,7 @@ void *crypt_safe_alloc(size_t size)
 		return NULL;
 
 	alloc->size = size;
-	crypt_memzero(&alloc->data, size);
+	memset(&alloc->data, 0, size);
 
 	/* coverity[leaked_storage] */
 	return &alloc->data;
@@ -122,7 +110,7 @@ void crypt_safe_free(void *data)
 	alloc = (struct safe_allocation *)
 		((char *)data - offsetof(struct safe_allocation, data));
 
-	crypt_memzero(data, alloc->size);
+	memset(data, 0, alloc->size);
 
 	alloc->size = 0x55aa55aa;
 	free(alloc);
@@ -169,7 +157,7 @@ static int untimed_read(int fd, char *pass, size_t maxlen)
 static int timed_read(int fd, char *pass, size_t maxlen, long timeout)
 {
 	struct timeval t;
-	fd_set fds = {}; /* Just to avoid scan-build false report for FD_SET */
+	fd_set fds;
 	int failed = -1;
 
 	FD_ZERO(&fds);
@@ -188,18 +176,16 @@ static int interactive_pass(const char *prompt, char *pass, size_t maxlen,
 {
 	struct termios orig, tmp;
 	int failed = -1;
-	int infd, outfd;
+	int infd = STDIN_FILENO, outfd;
 
 	if (maxlen < 1)
-		return failed;
+		goto out_err;
 
 	/* Read and write to /dev/tty if available */
-	infd = open("/dev/tty", O_RDWR);
-	if (infd == -1) {
+	if ((infd = outfd = open("/dev/tty", O_RDWR)) == -1) {
 		infd = STDIN_FILENO;
 		outfd = STDERR_FILENO;
-	} else
-		outfd = infd;
+	}
 
 	if (tcgetattr(infd, &orig))
 		goto out_err;

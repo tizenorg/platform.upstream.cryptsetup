@@ -1,10 +1,10 @@
 /*
  * cryptsetup - setup cryptographic volumes for dm-crypt
  *
- * Copyright (C) 2004, Jana Saout <jana@saout.de>
+ * Copyright (C) 2004, Christophe Saout <christophe@saout.de>
  * Copyright (C) 2004-2007, Clemens Fruhwirth <clemens@endorphin.org>
  * Copyright (C) 2009-2012, Red Hat, Inc. All rights reserved.
- * Copyright (C) 2009-2014, Milan Broz
+ * Copyright (C) 2009-2012, Milan Broz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -143,7 +143,6 @@ int yesDialog(const char *msg, void *usrptr __attribute__((unused)))
 	if(isatty(STDIN_FILENO) && !opt_batch_mode) {
 		log_std("\nWARNING!\n========\n");
 		log_std("%s\n\nAre you sure? (Type uppercase yes): ", msg);
-		fflush(stdout);
 		if(getline(&answer, &size, stdin) == -1) {
 			r = 0;
 			/* Aborted by signal */
@@ -164,7 +163,7 @@ int yesDialog(const char *msg, void *usrptr __attribute__((unused)))
 
 void show_status(int errcode)
 {
-	char error[256];
+	char error[256], *error_;
 
 	if(!opt_verbose)
 		return;
@@ -176,16 +175,12 @@ void show_status(int errcode)
 
 	crypt_get_error(error, sizeof(error));
 
-	if (*error) {
-#ifdef STRERROR_R_CHAR_P /* GNU-specific strerror_r */
-		char *error_ = strerror_r(-errcode, error, sizeof(error));
-		if (error_ != error)
+	if (!error[0]) {
+		error_ = strerror_r(-errcode, error, sizeof(error));
+		if (error_ != error) {
 			strncpy(error, error_, sizeof(error));
-#else /* POSIX strerror_r variant */
-		if (strerror_r(-errcode, error, sizeof(error)))
-			*error = '\0';
-#endif
-		error[sizeof(error) - 1] = '\0';
+			error[sizeof(error) - 1] = '\0';
+		}
 	}
 
 	log_err(_("Command failed with code %i"), -errcode);

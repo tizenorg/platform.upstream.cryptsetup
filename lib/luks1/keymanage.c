@@ -3,7 +3,6 @@
  *
  * Copyright (C) 2004-2006, Clemens Fruhwirth <clemens@endorphin.org>
  * Copyright (C) 2009-2012, Red Hat, Inc. All rights reserved.
- * Copyright (C) 2013-2014, Milan Broz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -83,12 +82,11 @@ static int LUKS_check_device_size(struct crypt_device *ctx, size_t keyLength)
 
 	dev_sectors >>= SECTOR_SHIFT;
 	hdr_sectors = LUKS_device_sectors(keyLength);
-	log_dbg("Key length %zu, device size %" PRIu64 " sectors, header size %"
+	log_dbg("Key length %u, device size %" PRIu64 " sectors, header size %"
 		PRIu64 " sectors.",keyLength, dev_sectors, hdr_sectors);
 
 	if (hdr_sectors > dev_sectors) {
-		log_err(ctx, _("Device %s is too small. (LUKS requires at least %" PRIu64 " bytes.)\n"),
-			device_path(device), hdr_sectors * SECTOR_SIZE);
+		log_err(ctx, _("Device %s is too small.\n"), device_path(device));
 		return -EINVAL;
 	}
 
@@ -148,32 +146,29 @@ static const char *dbg_slot_state(crypt_keyslot_info ki)
 	}
 }
 
-int LUKS_hdr_backup(const char *backup_file, struct crypt_device *ctx)
+int LUKS_hdr_backup(
+	const char *backup_file,
+	struct luks_phdr *hdr,
+	struct crypt_device *ctx)
 {
 	struct device *device = crypt_metadata_device(ctx);
-	struct luks_phdr hdr;
 	int r = 0, devfd = -1;
-	ssize_t hdr_size;
 	ssize_t buffer_size;
 	char *buffer = NULL;
 
-	r = LUKS_read_phdr(&hdr, 1, 0, ctx);
+	r = LUKS_read_phdr(hdr, 1, 0, ctx);
 	if (r)
 		return r;
 
-	hdr_size = LUKS_device_sectors(hdr.keyBytes) << SECTOR_SHIFT;
-	buffer_size = size_round_up(hdr_size, crypt_getpagesize());
-
+	buffer_size = LUKS_device_sectors(hdr->keyBytes) << SECTOR_SHIFT;
 	buffer = crypt_safe_alloc(buffer_size);
-	if (!buffer || hdr_size < LUKS_ALIGN_KEYSLOTS || hdr_size > buffer_size) {
+	if (!buffer || buffer_size < LUKS_ALIGN_KEYSLOTS) {
 		r = -ENOMEM;
 		goto out;
 	}
 
-	log_dbg("Storing backup of header (%zu bytes) and keyslot area (%zu bytes).",
-		sizeof(hdr), hdr_size - LUKS_ALIGN_KEYSLOTS);
-
-	log_dbg("Output backup file size: %zu bytes.", buffer_size);
+	log_dbg("Storing backup of header (%u bytes) and keyslot area (%u bytes).",
+		sizeof(*hdr), buffer_size - LUKS_ALIGN_KEYSLOTS);
 
 	devfd = device_open(device, O_RDONLY);
 	if(devfd == -1) {
@@ -182,15 +177,15 @@ int LUKS_hdr_backup(const char *backup_file, struct crypt_device *ctx)
 		goto out;
 	}
 
-	if (read_blockwise(devfd, device_block_size(device), buffer, hdr_size) < hdr_size) {
+	if (read_blockwise(devfd, device_block_size(device), buffer, buffer_size) < buffer_size) {
 		r = -EIO;
 		goto out;
 	}
 	close(devfd);
 
 	/* Wipe unused area, so backup cannot contain old signatures */
-	if (hdr.keyblock[0].keyMaterialOffset * SECTOR_SIZE == LUKS_ALIGN_KEYSLOTS)
-		memset(buffer + sizeof(hdr), 0, LUKS_ALIGN_KEYSLOTS - sizeof(hdr));
+	if (hdr->keyblock[0].keyMaterialOffset * SECTOR_SIZE == LUKS_ALIGN_KEYSLOTS)
+		memset(buffer + sizeof(*hdr), 0, LUKS_ALIGN_KEYSLOTS - sizeof(*hdr));
 
 	devfd = open(backup_file, O_CREAT|O_EXCL|O_WRONLY, S_IRUSR);
 	if (devfd == -1) {
@@ -212,7 +207,6 @@ int LUKS_hdr_backup(const char *backup_file, struct crypt_device *ctx)
 out:
 	if (devfd != -1)
 		close(devfd);
-	crypt_memzero(&hdr, sizeof(hdr));
 	crypt_safe_free(buffer);
 	return r;
 }
@@ -287,7 +281,7 @@ int LUKS_hdr_restore(
 		goto out;
 	}
 
-	log_dbg("Storing backup of header (%zu bytes) and keyslot area (%zu bytes) to device %s.",
+	log_dbg("Storing backup of header (%u bytes) and keyslot area (%u bytes) to device %s.",
 		sizeof(*hdr), buffer_size - LUKS_ALIGN_KEYSLOTS, device_path(device));
 
 	devfd = device_open(device, O_RDWR);
@@ -398,7 +392,7 @@ static int _keyslot_repair(struct luks_phdr *phdr, struct crypt_device *ctx)
 	}
 out:
 	crypt_free_volume_key(vk);
-	crypt_memzero(&temp_phdr, sizeof(temp_phdr));
+	memset(&temp_phdr, 0, sizeof(temp_phdr));
 	return r;
 }
 
@@ -471,13 +465,6 @@ static void LUKS_fix_header_compatible(struct luks_phdr *header)
 	/* Old cryptsetup expects "sha1", gcrypt allows case insensistive names,
 	 * so always convert hash to lower case in header */
 	_to_lower(header->hashSpec, LUKS_HASHSPEC_L);
-
-	/* ECB mode does not use IV but dmcrypt silently allows it.
-	 * Drop any IV here if ECB is used (that is not secure anyway).*/
-	if (!strncmp(header->cipherMode, "ecb-", 4)) {
-		memset(header->cipherMode, 0, LUKS_CIPHERMODE_L);
-		strcpy(header->cipherMode, "ecb");
-	}
 }
 
 int LUKS_read_phdr_backup(const char *backup_file,
@@ -527,7 +514,7 @@ int LUKS_read_phdr(struct luks_phdr *hdr,
 	if (repair && !require_luks_device)
 		return -EINVAL;
 
-	log_dbg("Reading LUKS header of size %zu from device %s",
+	log_dbg("Reading LUKS header of size %d from device %s",
 		hdr_size, device_path(device));
 
 	devfd = device_open(device, O_RDONLY);
@@ -559,7 +546,7 @@ int LUKS_write_phdr(struct luks_phdr *hdr,
 	struct luks_phdr convHdr;
 	int r;
 
-	log_dbg("Updating LUKS header of size %zu on device %s",
+	log_dbg("Updating LUKS header of size %d on device %s",
 		sizeof(struct luks_phdr), device_path(device));
 
 	r = LUKS_check_device_size(ctx, hdr->keyBytes);
@@ -604,28 +591,6 @@ int LUKS_write_phdr(struct luks_phdr *hdr,
 				device_path(device));
 	}
 
-	return r;
-}
-
-/* Check that kernel supports requested cipher by decryption of one sector */
-static int LUKS_check_cipher(struct luks_phdr *hdr, struct crypt_device *ctx)
-{
-	int r;
-	struct volume_key *empty_key;
-	char buf[SECTOR_SIZE];
-
-	log_dbg("Checking if cipher %s-%s is usable.", hdr->cipherName, hdr->cipherMode);
-
-	empty_key = crypt_alloc_volume_key(hdr->keyBytes, NULL);
-	if (!empty_key)
-		return -ENOMEM;
-
-	r = LUKS_decrypt_from_storage(buf, sizeof(buf),
-				      hdr->cipherName, hdr->cipherMode,
-				      empty_key, 0, ctx);
-
-	crypt_free_volume_key(empty_key);
-	crypt_memzero(buf, sizeof(buf));
 	return r;
 }
 
@@ -681,10 +646,6 @@ int LUKS_generate_phdr(struct luks_phdr *header,
 	header->keyBytes=vk->keylength;
 
 	LUKS_fix_header_compatible(header);
-
-	r = LUKS_check_cipher(header, ctx);
-	if (r < 0)
-		return r;
 
 	log_dbg("Generating LUKS header version %d using hash %s, %s, %s, MK %d bytes",
 		header->version, header->hashSpec ,header->cipherName, header->cipherMode,
@@ -811,7 +772,7 @@ int LUKS_set_key(unsigned int keyIndex,
 	hdr->keyblock[keyIndex].passwordIterations = at_least((uint32_t)PBKDF2_temp,
 							      LUKS_SLOT_ITERATIONS_MIN);
 
-	log_dbg("Key slot %d use %" PRIu32 " password iterations.", keyIndex, hdr->keyblock[keyIndex].passwordIterations);
+	log_dbg("Key slot %d use %d password iterations.", keyIndex, hdr->keyblock[keyIndex].passwordIterations);
 
 	derived_key = crypt_alloc_volume_key(hdr->keyBytes, NULL);
 	if (!derived_key)

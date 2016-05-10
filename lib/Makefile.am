@@ -39,6 +39,7 @@ libcryptsetup_la_LIBADD = \
 	@UUID_LIBS@				\
 	@DEVMAPPER_LIBS@			\
 	@CRYPTO_LIBS@				\
+	@FIPSCHECK_LIBS@			\
 	$(common_ldadd)
 
 

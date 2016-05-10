@@ -39,7 +39,7 @@ KEY_MATERIAL5_EXT="S331776-395264"
 TEST_UUID="12345678-1234-1234-1234-123456789abc"
 
 LOOPDEV=$(losetup -f 2>/dev/null)
-[ -f /etc/system-fips ] && FIPS_MODE=$(cat /proc/sys/crypto/fips_enabled 2>/dev/null)
+FIPS_MODE=$(cat /proc/sys/crypto/fips_enabled 2>/dev/null)
 
 function remove_mapping()
 {
@@ -314,9 +314,6 @@ $CRYPTSETUP luksDump $LOOPDEV | grep -q "Key Slot 3: ENABLED" || fail
 echo $PWD2 | $CRYPTSETUP luksAddKey $LOOPDEV --master-key-file /dev/zero --key-slot 4 || fail
 $CRYPTSETUP luksDump $LOOPDEV | grep -q "Key Slot 4: ENABLED" || fail
 echo $PWD3 | $CRYPTSETUP luksAddKey $LOOPDEV --master-key-file /dev/null --key-slot 5 2>/dev/null && fail
-$CRYPTSETUP luksAddKey $LOOPDEV --master-key-file /dev/zero --key-slot 5 $KEY1 || fail
-$CRYPTSETUP luksDump $LOOPDEV | grep -q "Key Slot 5: ENABLED" || fail
-
 # [0]PWD1 [1]PWD2 [2]$KEY1/1 [3]$KEY1 [4]$KEY2
 $CRYPTSETUP -q luksFormat $LOOPDEV $KEY1 --key-slot 3 || fail
 $CRYPTSETUP luksDump $LOOPDEV | grep -q "Key Slot 3: ENABLED" || fail
@@ -536,15 +533,9 @@ echo $PWD1 | $CRYPTSETUP luksFormat -i1 $LOOPDEV --header $HEADER_IMG --align-pa
 echo $PWD1 | $CRYPTSETUP luksOpen $LOOPDEV --header $HEADER_IMG $DEV_NAME || fail
 $CRYPTSETUP -q resize  $DEV_NAME --size 100 --header $HEADER_IMG || fail
 $CRYPTSETUP -q status  $DEV_NAME --header $HEADER_IMG | grep "size:" | grep -q "100 sectors" || fail
-$CRYPTSETUP -q status  $DEV_NAME | grep "type:" | grep -q "n/a" || fail
-$CRYPTSETUP -q status  $DEV_NAME | grep "size:" | grep -q "100 sectors" || fail
 $CRYPTSETUP luksSuspend $DEV_NAME --header $HEADER_IMG || fail
 echo $PWD1 | $CRYPTSETUP luksResume $DEV_NAME --header $HEADER_IMG || fail
 $CRYPTSETUP luksClose $DEV_NAME || fail
-echo $PWD1 | $CRYPTSETUP luksAddKey -S 5 _fakedev_ --header $HEADER_IMG $KEY5 || fail
-$CRYPTSETUP luksDump _fakedev_ --header $HEADER_IMG | grep -q "Key Slot 5: ENABLED" || fail
-$CRYPTSETUP luksKillSlot -q _fakedev_ --header $HEADER_IMG 5 || fail
-$CRYPTSETUP luksDump _fakedev_ --header $HEADER_IMG | grep -q "Key Slot 5: DISABLED" || fail
 
 prepare "[29] Repair metadata" wipe
 $CRYPTSETUP -q luksFormat -i1 $LOOPDEV $KEY1 --key-slot 0 || fail
@@ -554,15 +545,6 @@ $CRYPTSETUP luksOpen -d $KEY1 $LOOPDEV $DEV_NAME >/dev/null 2>&1 && fail
 $CRYPTSETUP -q repair $LOOPDEV >/dev/null 2>&1 || fail
 $CRYPTSETUP luksOpen -d $KEY1 $LOOPDEV $DEV_NAME || fail
 $CRYPTSETUP luksClose $DEV_NAME || fail
-
-prepare "[30] LUKS erase" wipe
-$CRYPTSETUP -q luksFormat -i1 $LOOPDEV $KEY5 --key-slot 5 || fail
-$CRYPTSETUP luksAddKey -S 1 -d $KEY5 $LOOPDEV $KEY1 || fail
-$CRYPTSETUP luksDump $LOOPDEV | grep -q "Key Slot 1: ENABLED" || fail
-$CRYPTSETUP luksDump $LOOPDEV | grep -q "Key Slot 5: ENABLED" || fail
-$CRYPTSETUP luksErase -q $LOOPDEV || fail
-$CRYPTSETUP luksDump $LOOPDEV | grep -q "Key Slot 1: DISABLED" || fail
-$CRYPTSETUP luksDump $LOOPDEV | grep -q "Key Slot 5: DISABLED" || fail
 
 remove_mapping
 exit 0

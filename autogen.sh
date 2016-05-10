@@ -82,9 +82,9 @@ automake --add-missing --copy --gnu $AM_OPTS
 autoconf $AC_OPTS
 
 if test x$NOCONFIGURE = x; then
-	echo Running $srcdir/configure $conf_flags "$@" ...
-	$srcdir/configure $conf_flags "$@" \
-		&& echo Now type \`make\' to compile $PKG_NAME
+  echo Running $srcdir/configure $conf_flags "$@" ...
+  $srcdir/configure $conf_flags "$@" \
+  && echo Now type \`make\' to compile $PKG_NAME
 else
-	echo Skipping configure process.
+  echo Skipping configure process.
 fi

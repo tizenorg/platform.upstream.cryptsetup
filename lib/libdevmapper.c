@@ -1,10 +1,10 @@
 /*
  * libdevmapper - device-mapper backend for cryptsetup
  *
- * Copyright (C) 2004, Jana Saout <jana@saout.de>
+ * Copyright (C) 2004, Christophe Saout <christophe@saout.de>
  * Copyright (C) 2004-2007, Clemens Fruhwirth <clemens@endorphin.org>
- * Copyright (C) 2009-2015, Red Hat, Inc. All rights reserved.
- * Copyright (C) 2009-2015, Milan Broz
+ * Copyright (C) 2009-2012, Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2009-2012, Milan Broz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,6 +28,7 @@
 #include <fcntl.h>
 #include <linux/fs.h>
 #include <uuid/uuid.h>
+#include <sys/utsname.h>
 
 #include "internal.h"
 
@@ -85,12 +86,12 @@ static void set_dm_error(int level,
 	va_start(va, f);
 	if (vasprintf(&msg, f, va) > 0) {
 		if (level < 4 && !_quiet_log) {
-			log_err(_context, "%s", msg);
+			log_err(_context, msg);
 			log_err(_context, "\n");
 		} else {
 			/* We do not use DM visual stack backtrace here */
 			if (strncmp(msg, "<backtrace>", 11))
-				log_dbg("%s", msg);
+				log_dbg(msg);
 		}
 	}
 	free(msg);
@@ -98,18 +99,6 @@ static void set_dm_error(int level,
 }
 
 static int _dm_simple(int task, const char *name, int udev_wait);
-
-static int _dm_satisfies_version(unsigned target_maj, unsigned target_min,
-				 unsigned actual_maj, unsigned actual_min)
-{
-	if (actual_maj > target_maj)
-		return 1;
-
-	if (actual_maj == target_maj && actual_min >= target_min)
-		return 1;
-
-	return 0;
-}
 
 static void _dm_set_crypt_compat(const char *dm_version, unsigned crypt_maj,
 				 unsigned crypt_min, unsigned crypt_patch)
@@ -122,31 +111,23 @@ static void _dm_set_crypt_compat(const char *dm_version, unsigned crypt_maj,
 	log_dbg("Detected dm-crypt version %i.%i.%i, dm-ioctl version %u.%u.%u.",
 		crypt_maj, crypt_min, crypt_patch, dm_maj, dm_min, dm_patch);
 
-	if (_dm_satisfies_version(1, 2, crypt_maj, crypt_min))
+	if (crypt_maj >= 1 && crypt_min >= 2)
 		_dm_crypt_flags |= DM_KEY_WIPE_SUPPORTED;
 	else
 		log_dbg("Suspend and resume disabled, no wipe key support.");
 
-	if (_dm_satisfies_version(1, 10, crypt_maj, crypt_min))
+	if (crypt_maj >= 1 && crypt_min >= 10)
 		_dm_crypt_flags |= DM_LMK_SUPPORTED;
 
-	if (_dm_satisfies_version(4, 20, dm_maj, dm_min))
+	if (dm_maj >= 4 && dm_min >= 20)
 		_dm_crypt_flags |= DM_SECURE_SUPPORTED;
 
 	/* not perfect, 2.6.33 supports with 1.7.0 */
-	if (_dm_satisfies_version(1, 8, crypt_maj, crypt_min))
+	if (crypt_maj >= 1 && crypt_min >= 8)
 		_dm_crypt_flags |= DM_PLAIN64_SUPPORTED;
 
-	if (_dm_satisfies_version(1, 11, crypt_maj, crypt_min))
+	if (crypt_maj >= 1 && crypt_min >= 11)
 		_dm_crypt_flags |= DM_DISCARDS_SUPPORTED;
-
-	if (_dm_satisfies_version(1, 13, crypt_maj, crypt_min))
-		_dm_crypt_flags |= DM_TCW_SUPPORTED;
-
-	if (_dm_satisfies_version(1, 14, crypt_maj, crypt_min)) {
-		_dm_crypt_flags |= DM_SAME_CPU_CRYPT_SUPPORTED;
-		_dm_crypt_flags |= DM_SUBMIT_FROM_CRYPT_CPUS_SUPPORTED;
-	}
 
 	/* Repeat test if dm-crypt is not present */
 	if (crypt_maj > 0)
@@ -163,6 +144,16 @@ static void _dm_set_verity_compat(const char *dm_version, unsigned verity_maj,
 		verity_maj, verity_min, verity_patch);
 }
 
+static void _dm_kernel_info(void)
+{
+	struct utsname uts;
+
+	if (!uname(&uts))
+		log_dbg("Detected kernel %s %s %s.",
+			uts.sysname, uts.release, uts.machine);
+
+}
+
 static int _dm_check_versions(void)
 {
 	struct dm_task *dmt;
@@ -172,6 +163,8 @@ static int _dm_check_versions(void)
 
 	if (_dm_crypt_checked)
 		return 1;
+
+	_dm_kernel_info();
 
 	/* Shut up DM while checking */
 	_quiet_log = 1;
@@ -297,30 +290,23 @@ static void hex_key(char *hexkey, size_t key_size, const char *key)
 		sprintf(&hexkey[i * 2], "%02x", (unsigned char)key[i]);
 }
 
-/* https://gitlab.com/cryptsetup/cryptsetup/wikis/DMCrypt */
-static char *get_dm_crypt_params(struct crypt_dm_active_device *dmd, uint32_t flags)
+/* http://code.google.com/p/cryptsetup/wiki/DMCrypt */
+static char *get_dm_crypt_params(struct crypt_dm_active_device *dmd)
 {
-	int r, max_size, null_cipher = 0, num_options = 0;
+	int r, max_size, null_cipher = 0;
 	char *params, *hexkey;
-	char features[256];
+	const char *features = "";
 
 	if (!dmd)
 		return NULL;
 
-	if (flags & CRYPT_ACTIVATE_ALLOW_DISCARDS)
-		num_options++;
-	if (flags & CRYPT_ACTIVATE_SAME_CPU_CRYPT)
-		num_options++;
-	if (flags & CRYPT_ACTIVATE_SUBMIT_FROM_CRYPT_CPUS)
-		num_options++;
-
-	if (num_options)
-		snprintf(features, sizeof(features)-1, " %d%s%s%s", num_options,
-		(flags & CRYPT_ACTIVATE_ALLOW_DISCARDS) ? " allow_discards" : "",
-		(flags & CRYPT_ACTIVATE_SAME_CPU_CRYPT) ? " same_cpu_crypt" : "",
-		(flags & CRYPT_ACTIVATE_SUBMIT_FROM_CRYPT_CPUS) ? " submit_from_crypt_cpus" : "");
-	else
-		*features = '\0';
+	if (dmd->flags & CRYPT_ACTIVATE_ALLOW_DISCARDS) {
+		if (dm_flags() & DM_DISCARDS_SUPPORTED) {
+			features = " 1 allow_discards";
+			log_dbg("Discard/TRIM is allowed.");
+		} else
+			log_dbg("Discard/TRIM is not supported by the kernel.");
+	}
 
 	if (!strncmp(dmd->u.crypt.cipher, "cipher_null-", 12))
 		null_cipher = 1;
@@ -354,7 +340,7 @@ out:
 	return params;
 }
 
-/* https://gitlab.com/cryptsetup/cryptsetup/wikis/DMVerity */
+/* http://code.google.com/p/cryptsetup/wiki/DMVerity */
 static char *get_dm_verity_params(struct crypt_params_verity *vp,
 				   struct crypt_dm_active_device *dmd)
 {
@@ -530,7 +516,7 @@ static int dm_prepare_uuid(const char *name, const char *type, const char *uuid,
 	if (uuid) {
 		if (uuid_parse(uuid, uu) < 0) {
 			log_dbg("Requested UUID %s has invalid format.", uuid);
-			return 0;
+			return -EINVAL;
 		}
 
 		for (ptr = uuid2, i = 0; i < UUID_LEN; i++)
@@ -549,7 +535,7 @@ static int dm_prepare_uuid(const char *name, const char *type, const char *uuid,
 	if (i >= buflen)
 		log_err(NULL, _("DM-UUID for device %s was truncated.\n"), name);
 
-	return 1;
+	return 0;
 }
 
 static int _dm_create_device(const char *name, const char *type,
@@ -565,9 +551,6 @@ static int _dm_create_device(const char *name, const char *type,
 	uint32_t cookie = 0;
 	uint16_t udev_flags = 0;
 
-	if (!params)
-		return -EINVAL;
-
 	if (flags & CRYPT_ACTIVATE_PRIVATE)
 		udev_flags = CRYPT_TEMP_UDEV_FLAGS;
 
@@ -579,8 +562,9 @@ static int _dm_create_device(const char *name, const char *type,
 		if (!dm_task_set_name(dmt, name))
 			goto out_no_removal;
 	} else {
-		if (!dm_prepare_uuid(name, type, uuid, dev_uuid, sizeof(dev_uuid)))
-			goto out_no_removal;
+		r = dm_prepare_uuid(name, type, uuid, dev_uuid, sizeof(dev_uuid));
+		if (r < 0)
+			return r;
 
 		if (!(dmt = dm_task_create(DM_DEVICE_CREATE)))
 			goto out_no_removal;
@@ -644,14 +628,12 @@ out_no_removal:
 	if (cookie && _dm_use_udev())
 		(void)_dm_udev_wait(cookie);
 
+	if (params)
+		crypt_safe_free(params);
 	if (dmt)
 		dm_task_destroy(dmt);
 
 	dm_task_update_nodes();
-
-	/* If code just loaded target module, update versions */
-	_dm_check_versions();
-
 	return r;
 }
 
@@ -661,8 +643,7 @@ int dm_create_device(struct crypt_device *cd, const char *name,
 		     int reload)
 {
 	char *table_params = NULL;
-	uint32_t dmd_flags;
-	int r;
+	int r = -EINVAL;
 
 	if (!type)
 		return -EINVAL;
@@ -670,34 +651,15 @@ int dm_create_device(struct crypt_device *cd, const char *name,
 	if (dm_init_context(cd))
 		return -ENOTSUP;
 
-	dmd_flags = dmd->flags;
-
 	if (dmd->target == DM_CRYPT)
-		table_params = get_dm_crypt_params(dmd, dmd_flags);
+		table_params = get_dm_crypt_params(dmd);
 	else if (dmd->target == DM_VERITY)
 		table_params = get_dm_verity_params(dmd->u.verity.vp, dmd);
 
-	r = _dm_create_device(name, type, dmd->data_device, dmd_flags,
-			      dmd->uuid, dmd->size, table_params, reload);
-
-	/* If discard not supported try to load without discard */
-	if (!reload && r && dmd->target == DM_CRYPT &&
-	    (dmd->flags & CRYPT_ACTIVATE_ALLOW_DISCARDS) &&
-	    !(dm_flags() & DM_DISCARDS_SUPPORTED)) {
-		log_dbg("Discard/TRIM is not supported, retrying activation.");
-		dmd_flags = dmd_flags & ~CRYPT_ACTIVATE_ALLOW_DISCARDS;
-		crypt_safe_free(table_params);
-		table_params = get_dm_crypt_params(dmd, dmd_flags);
-		r = _dm_create_device(name, type, dmd->data_device, dmd_flags,
-				      dmd->uuid, dmd->size, table_params, reload);
-	}
-
-	if (r == -EINVAL &&
-	    dmd_flags & (CRYPT_ACTIVATE_SAME_CPU_CRYPT|CRYPT_ACTIVATE_SUBMIT_FROM_CRYPT_CPUS) &&
-	    !(dm_flags() & (DM_SAME_CPU_CRYPT_SUPPORTED|DM_SUBMIT_FROM_CRYPT_CPUS_SUPPORTED)))
-		log_err(cd, _("Requested dmcrypt performance options are not supported.\n"));
-
-	crypt_safe_free(table_params);
+	if (table_params)
+		r = _dm_create_device(name, type, dmd->data_device,
+				      dmd->flags, dmd->uuid, dmd->size,
+				      table_params, reload);
 	dm_exit_context();
 	return r;
 }
@@ -884,10 +846,6 @@ static int _dm_query_crypt(uint32_t get_flags,
 			arg = strsep(&params, " ");
 			if (!strcasecmp(arg, "allow_discards"))
 				dmd->flags |= CRYPT_ACTIVATE_ALLOW_DISCARDS;
-			else if (!strcasecmp(arg, "same_cpu_crypt"))
-				dmd->flags |= CRYPT_ACTIVATE_SAME_CPU_CRYPT;
-			else if (!strcasecmp(arg, "submit_from_crypt_cpus"))
-				dmd->flags |= CRYPT_ACTIVATE_SUBMIT_FROM_CRYPT_CPUS;
 			else /* unknown option */
 				return -EINVAL;
 		}

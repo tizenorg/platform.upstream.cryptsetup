@@ -1,7 +1,7 @@
 /*
  * PBKDF performance check
  * Copyright (C) 2012, Red Hat, Inc. All rights reserved.
- * Copyright (C) 2012-2014, Milan Broz
+ * Copyright (C) 2012, Milan Broz
  *
  * This file is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -25,24 +25,12 @@
 
 static long time_ms(struct rusage *start, struct rusage *end)
 {
-	int count_kernel_time = 0;
 	long ms;
-
-	if (crypt_backend_flags() & CRYPT_BACKEND_KERNEL)
-		count_kernel_time = 1;
-
-	/*
-	 * FIXME: if there is no self usage info, count system time.
-	 * This seem like getrusage() bug in some hypervisors...
-	 */
-	if (!end->ru_utime.tv_sec && !start->ru_utime.tv_sec &&
-	    !end->ru_utime.tv_usec && !start->ru_utime.tv_usec)
-		count_kernel_time = 1;
 
 	ms = (end->ru_utime.tv_sec - start->ru_utime.tv_sec) * 1000;
 	ms += (end->ru_utime.tv_usec - start->ru_utime.tv_usec) / 1000;
 
-	if (count_kernel_time) {
+	if (crypt_backend_flags() & CRYPT_BACKEND_KERNEL) {
 		ms += (end->ru_stime.tv_sec - start->ru_stime.tv_sec) * 1000;
 		ms += (end->ru_stime.tv_usec - start->ru_stime.tv_usec) / 1000;
 	}

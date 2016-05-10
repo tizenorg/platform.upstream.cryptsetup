@@ -1,7 +1,7 @@
 /*
  * devname - search for device name
  *
- * Copyright (C) 2004, Jana Saout <jana@saout.de>
+ * Copyright (C) 2004, Christophe Saout <christophe@saout.de>
  * Copyright (C) 2004-2007, Clemens Fruhwirth <clemens@endorphin.org>
  * Copyright (C) 2009-2012, Red Hat, Inc. All rights reserved.
  * Copyright (C) 2009-2013, Milan Broz
@@ -236,24 +236,6 @@ int crypt_dev_is_partition(const char *dev_path)
 	return val ? 1 : 0;
 }
 
-uint64_t crypt_dev_partition_offset(const char *dev_path)
-{
-	uint64_t val;
-	struct stat st;
-
-	if (!crypt_dev_is_partition(dev_path))
-		return 0;
-
-	if (stat(dev_path, &st) < 0)
-		return 0;
-
-	if (!_sysfs_get_uint64(major(st.st_rdev), minor(st.st_rdev),
-			      &val, "start"))
-		return 0;
-
-	return val;
-}
-
 /* Try to find partition which match offset and size on top level device */
 char *crypt_get_partition_device(const char *dev_path, uint64_t offset, uint64_t size)
 {
@@ -322,43 +304,4 @@ char *crypt_get_partition_device(const char *dev_path, uint64_t offset, uint64_t
 	closedir(dir);
 
 	return result;
-}
-
-/* Try to find base device from partition */
-char *crypt_get_base_device(const char *dev_path)
-{
-	char link[PATH_MAX], path[PATH_MAX], part_path[PATH_MAX], *devname;
-	struct stat st;
-	ssize_t len;
-
-	if (!crypt_dev_is_partition(dev_path))
-		return NULL;
-
-	if (stat(dev_path, &st) < 0)
-		return NULL;
-
-	if (snprintf(path, sizeof(path), "/sys/dev/block/%d:%d",
-		major(st.st_rdev), minor(st.st_rdev)) < 0)
-		return NULL;
-
-	len = readlink(path, link, sizeof(link) - 1);
-	if (len < 0)
-		return NULL;
-
-	/* Get top level disk name for sysfs search */
-	link[len] = '\0';
-	devname = strrchr(link, '/');
-	if (!devname)
-		return NULL;
-	*devname = '\0';
-	devname = strrchr(link, '/');
-	if (!devname)
-		return NULL;
-	devname++;
-
-	if (dm_is_dm_kernel_name(devname))
-		return NULL;
-
-	snprintf(part_path, sizeof(part_path), "/dev/%s", devname);
-	return strdup(part_path);
 }

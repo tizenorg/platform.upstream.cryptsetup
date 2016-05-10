@@ -2,7 +2,7 @@
  * libcryptsetup - cryptsetup library, cipher bechmark
  *
  * Copyright (C) 2012, Red Hat, Inc. All rights reserved.
- * Copyright (C) 2012-2013, Milan Broz
+ * Copyright (C) 2012, Milan Broz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -21,7 +21,8 @@
 
 #include <stdlib.h>
 #include <errno.h>
-#include <time.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 
 #include "internal.h"
 
@@ -30,12 +31,6 @@
  * Let's use some fixed block size where results are more reliable...
  */
 #define CIPHER_BLOCK_BYTES 65536
-
-/*
- * If the measured value is lower, encrypted buffer is probably too small
- * and calculated values are not reliable.
- */
-#define CIPHER_TIME_MIN_MS 0.001
 
 /*
  * The whole test depends on Linux kernel usermode crypto API for now.
@@ -52,15 +47,19 @@ struct cipher_perf {
 	size_t buffer_size;
 };
 
-static int time_ms(struct timespec *start, struct timespec *end, double *ms)
+static long time_ms(struct rusage *start, struct rusage *end)
 {
-	double start_ms, end_ms;
+	long ms = 0;
 
-	start_ms = start->tv_sec * 1000.0 + start->tv_nsec / (1000.0 * 1000);
-	end_ms   = end->tv_sec * 1000.0 + end->tv_nsec / (1000.0 * 1000);
+	/* For kernel backend, we need to measure only tim in kernel.
+	ms = (end->ru_utime.tv_sec - start->ru_utime.tv_sec) * 1000;
+	ms += (end->ru_utime.tv_usec - start->ru_utime.tv_usec) / 1000;
+	*/
 
-	*ms = end_ms - start_ms;
-	return 0;
+	ms += (end->ru_stime.tv_sec - start->ru_stime.tv_sec) * 1000;
+	ms += (end->ru_stime.tv_usec - start->ru_stime.tv_usec) / 1000;
+
+	return ms;
 }
 
 static int cipher_perf_one(struct cipher_perf *cp, char *buf,
@@ -99,39 +98,26 @@ static int cipher_perf_one(struct cipher_perf *cp, char *buf,
 
 	return r;
 }
-static int cipher_measure(struct cipher_perf *cp, char *buf,
-			  size_t buf_size, int encrypt, double *ms)
+static long cipher_measure(struct cipher_perf *cp, char *buf,
+			   size_t buf_size, int encrypt)
 {
-	struct timespec start, end;
+	struct rusage rstart, rend;
 	int r;
 
-	/*
-	 * Using getrusage would be better here but the precision
-	 * is not adequate, so better stick with CLOCK_MONOTONIC
-	 */
-	if (clock_gettime(CLOCK_MONOTONIC, &start) < 0)
+	if (getrusage(RUSAGE_SELF, &rstart) < 0)
 		return -EINVAL;
 
 	r = cipher_perf_one(cp, buf, buf_size, encrypt);
 	if (r < 0)
 		return r;
 
-	if (clock_gettime(CLOCK_MONOTONIC, &end) < 0)
+	if (getrusage(RUSAGE_SELF, &rend) < 0)
 		return -EINVAL;
 
-	r = time_ms(&start, &end, ms);
-	if (r < 0)
-		return r;
-
-	if (*ms < CIPHER_TIME_MIN_MS) {
-		log_dbg("Measured cipher runtime (%1.6f) is too low.", *ms);
-		return -ERANGE;
-	}
-
-	return 0;
+	return time_ms(&rstart, &rend);
 }
 
-static double speed_mbs(unsigned long bytes, double ms)
+static double speed_mbs(unsigned long bytes, unsigned long ms)
 {
 	double speed = bytes, s = ms / 1000.;
 
@@ -141,32 +127,32 @@ static double speed_mbs(unsigned long bytes, double ms)
 static int cipher_perf(struct cipher_perf *cp,
 	double *encryption_mbs, double *decryption_mbs)
 {
-	double ms_enc, ms_dec, ms;
-	int r, repeat_enc, repeat_dec;
+	long ms_enc, ms_dec, ms;
+	int repeat_enc, repeat_dec;
 	void *buf = NULL;
 
 	if (posix_memalign(&buf, crypt_getpagesize(), cp->buffer_size))
 		return -ENOMEM;
 
-	ms_enc = 0.0;
+	ms_enc = 0;
 	repeat_enc = 1;
-	while (ms_enc < 1000.0) {
-		r = cipher_measure(cp, buf, cp->buffer_size, 1, &ms);
-		if (r < 0) {
+	while (ms_enc < 1000) {
+		ms = cipher_measure(cp, buf, cp->buffer_size, 1);
+		if (ms < 0) {
 			free(buf);
-			return r;
+			return (int)ms;
 		}
 		ms_enc += ms;
 		repeat_enc++;
 	}
 
-	ms_dec = 0.0;
+	ms_dec = 0;
 	repeat_dec = 1;
-	while (ms_dec < 1000.0) {
-		r = cipher_measure(cp, buf, cp->buffer_size, 0, &ms);
-		if (r < 0) {
+	while (ms_dec < 1000) {
+		ms = cipher_measure(cp, buf, cp->buffer_size, 0);
+		if (ms < 0) {
 			free(buf);
-			return r;
+			return (int)ms;
 		}
 		ms_dec += ms;
 		repeat_dec++;

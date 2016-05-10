@@ -35,7 +35,7 @@ struct volume_key *crypt_alloc_volume_key(unsigned keylength, const char *key)
 	if (key)
 		memcpy(&vk->key, key, keylength);
 	else
-		crypt_memzero(&vk->key, keylength);
+		memset(&vk->key, 0, keylength);
 
 	return vk;
 }
@@ -43,7 +43,7 @@ struct volume_key *crypt_alloc_volume_key(unsigned keylength, const char *key)
 void crypt_free_volume_key(struct volume_key *vk)
 {
 	if (vk) {
-		crypt_memzero(vk->key, vk->keylength);
+		memset(vk->key, 0, vk->keylength);
 		vk->keylength = 0;
 		free(vk);
 	}

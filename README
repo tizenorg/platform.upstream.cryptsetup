@@ -5,11 +5,11 @@ setup cryptographic volumes for dm-crypt (including LUKS extension)
 
 WEB PAGE:
 
-      https://gitlab.com/cryptsetup/cryptsetup/
+      http://code.google.com/p/cryptsetup/
 
 FAQ:
 
-      https://gitlab.com/cryptsetup/cryptsetup/wikis/FrequentlyAskedQuestions
+      http://code.google.com/p/cryptsetup/wiki/FrequentlyAskedQuestions
 
 MAILING LIST:
 
@@ -18,12 +18,12 @@ MAILING LIST:
 
 DOWNLOAD:
 
-      https://www.kernel.org/pub/linux/utils/cryptsetup/
+      http://code.google.com/p/cryptsetup/downloads/
 
 SOURCE CODE:
 
-      URL: https://gitlab.com/cryptsetup/cryptsetup/tree/master
-      Checkout: git clone https://gitlab.com/cryptsetup/cryptsetup.git
+      URL: http://code.google.com/p/cryptsetup/source/browse/
+      Checkout: git clone https://code.google.com/p/cryptsetup/
 
 NLS (PO TRANSLATIONS):
 

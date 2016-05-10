@@ -2,7 +2,7 @@
  * TCRYPT (TrueCrypt-compatible)  header defitinion
  *
  * Copyright (C) 2012, Red Hat, Inc. All rights reserved.
- * Copyright (C) 2012-2014, Milan Broz
+ * Copyright (C) 2012-2013, Milan Broz
  *
  * This file is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -29,7 +29,6 @@
 #define TCRYPT_HDR_LEN     448
 #define TCRYPT_HDR_KEY_LEN 192
 #define TCRYPT_HDR_MAGIC "TRUE"
-#define VCRYPT_HDR_MAGIC "VERA"
 #define TCRYPT_HDR_MAGIC_LEN 4
 
 #define TCRYPT_HDR_HIDDEN_OFFSET_OLD -1536

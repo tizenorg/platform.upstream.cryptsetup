@@ -1,10 +1,10 @@
 /*
  * cryptsetup - setup cryptographic volumes for dm-crypt
  *
- * Copyright (C) 2004, Jana Saout <jana@saout.de>
+ * Copyright (C) 2004, Christophe Saout <christophe@saout.de>
  * Copyright (C) 2004-2007, Clemens Fruhwirth <clemens@endorphin.org>
- * Copyright (C) 2009-2015, Red Hat, Inc. All rights reserved.
- * Copyright (C) 2009-2015, Milan Broz
+ * Copyright (C) 2009-2012, Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2009-2013, Milan Broz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -57,25 +57,13 @@ static int opt_urandom = 0;
 static int opt_dump_master_key = 0;
 static int opt_shared = 0;
 static int opt_allow_discards = 0;
-static int opt_perf_same_cpu_crypt = 0;
-static int opt_perf_submit_from_crypt_cpus = 0;
 static int opt_test_passphrase = 0;
 static int opt_tcrypt_hidden = 0;
 static int opt_tcrypt_system = 0;
-static int opt_tcrypt_backup = 0;
-static int opt_veracrypt = 0;
 
 static const char **action_argv;
 static int action_argc;
 static const char *null_action_argv[] = {NULL, NULL};
-
-static const char *uuid_or_device_header(const char **data_device)
-{
-	if (data_device)
-		*data_device = opt_header_device ? action_argv[0] : NULL;
-
-	return uuid_or_device(opt_header_device ?: action_argv[0]);
-}
 
 static int _verify_passphrase(int def)
 {
@@ -95,21 +83,6 @@ static int _verify_passphrase(int def)
 	return def;
 }
 
-static void _set_activation_flags(uint32_t *flags)
-{
-	if (opt_readonly)
-		*flags |= CRYPT_ACTIVATE_READONLY;
-
-	if (opt_allow_discards)
-		*flags |= CRYPT_ACTIVATE_ALLOW_DISCARDS;
-
-	if (opt_perf_same_cpu_crypt)
-		*flags |= CRYPT_ACTIVATE_SAME_CPU_CRYPT;
-
-	if (opt_perf_submit_from_crypt_cpus)
-		*flags |= CRYPT_ACTIVATE_SUBMIT_FROM_CRYPT_CPUS;
-}
-
 static int action_open_plain(void)
 {
 	struct crypt_device *cd = NULL;
@@ -124,8 +97,18 @@ static int action_open_plain(void)
 	size_t passwordLen;
 	size_t key_size = (opt_key_size ?: DEFAULT_PLAIN_KEYBITS) / 8;
 	uint32_t activate_flags = 0;
-	int keyfile_limited = 0;
 	int r;
+
+	if (params.hash && !strcmp(params.hash, "plain"))
+		params.hash = NULL;
+
+	/* FIXME: temporary hack */
+	if (opt_key_file && strcmp(opt_key_file, "-"))
+		params.hash = NULL;
+
+	if ((opt_keyfile_offset || opt_keyfile_size) && opt_key_file)
+		log_std(_("Ignoring keyfile offset and size options, keyfile read "
+			 "size is always the same as encryption key size.\n"));
 
 	r = crypt_parse_name_and_mode(opt_cipher ?: DEFAULT_CIPHER(PLAIN),
 				      cipher, NULL, cipher_mode);
@@ -133,24 +116,6 @@ static int action_open_plain(void)
 		log_err(_("No known cipher specification pattern detected.\n"));
 		goto out;
 	}
-
-	if (opt_key_file && strcmp(opt_key_file, "-") != 0)
-		keyfile_limited = 1;
-
-	/* FIXME: temporary hack, no hashing for keyfiles in plain mode */
-	if (opt_key_file && keyfile_limited) {
-		params.hash = NULL;
-		if (!opt_batch_mode && opt_hash)
-			log_std(_("WARNING: The --hash parameter is being ignored "
-				 "in plain mode with keyfile specified.\n"));
-	}
-
-	if (params.hash && !strcmp(params.hash, "plain"))
-		params.hash = NULL;
-
-	if (!opt_batch_mode && !params.hash && opt_key_file && keyfile_limited && opt_keyfile_size)
-		log_std(_("WARNING: The --keyfile-size option is being ignored, "
-			 "the read size is the same as the encryption key size.\n"));
 
 	if ((r = crypt_init(&cd, action_argv[0])))
 		goto out;
@@ -167,22 +132,22 @@ static int action_open_plain(void)
 	if (r < 0)
 		goto out;
 
+	if (opt_readonly)
+		activate_flags |= CRYPT_ACTIVATE_READONLY;
+
 	if (opt_shared)
 		activate_flags |= CRYPT_ACTIVATE_SHARED;
 
-	_set_activation_flags(&activate_flags);
+	if (opt_allow_discards)
+		activate_flags |= CRYPT_ACTIVATE_ALLOW_DISCARDS;
 
-	if (opt_key_file) {
-		/* If no hash, key is read directly, read size is always key_size
-		 * (possible opt_keyfile_size is ignored.
-		 * If hash is specified, opt_keyfile_size is applied.
-		 * The opt_keyfile_offset is applied always.
-		 */
+	if (opt_key_file)
+		/* With hashing, read the whole keyfile */
 		r = crypt_activate_by_keyfile_offset(cd, action_argv[1],
 			CRYPT_ANY_SLOT, opt_key_file,
-			params.hash ? opt_keyfile_size : key_size, opt_keyfile_offset,
+			params.hash ? 0 : key_size, 0,
 			activate_flags);
-	} else {
+	else {
 		r = tools_get_key(_("Enter passphrase: "),
 				  &password, &passwordLen,
 				  opt_keyfile_offset, opt_keyfile_size,
@@ -219,7 +184,11 @@ static int action_open_loopaes(void)
 		return -EINVAL;
 	}
 
-	_set_activation_flags(&activate_flags);
+	if (opt_readonly)
+		activate_flags |= CRYPT_ACTIVATE_READONLY;
+
+	if (opt_allow_discards)
+		activate_flags |= CRYPT_ACTIVATE_ALLOW_DISCARDS;
 
 	if ((r = crypt_init(&cd, action_argv[0])))
 		goto out;
@@ -232,53 +201,9 @@ static int action_open_loopaes(void)
 
 	r = crypt_activate_by_keyfile_offset(cd, action_argv[1], CRYPT_ANY_SLOT,
 				      opt_key_file, opt_keyfile_size,
-				      opt_keyfile_offset, activate_flags);
+				      opt_keyfile_size, activate_flags);
 out:
 	crypt_free(cd);
-
-	return r;
-}
-
-static int tcrypt_load(struct crypt_device *cd, struct crypt_params_tcrypt *params)
-{
-	int r, tries = opt_tries, eperm = 0;
-
-	do {
-		/* TCRYPT header is encrypted, get passphrase now */
-		r = tools_get_key(_("Enter passphrase: "),
-				  CONST_CAST(char**)&params->passphrase,
-				  &params->passphrase_size, 0, 0, NULL, opt_timeout,
-				 _verify_passphrase(0), 0, cd);
-		if (r < 0)
-			continue;
-
-		if (opt_tcrypt_hidden)
-			params->flags |= CRYPT_TCRYPT_HIDDEN_HEADER;
-
-		if (opt_tcrypt_system)
-			params->flags |= CRYPT_TCRYPT_SYSTEM_HEADER;
-
-		if (opt_tcrypt_backup)
-			params->flags |= CRYPT_TCRYPT_BACKUP_HEADER;
-
-		r = crypt_load(cd, CRYPT_TCRYPT, params);
-
-		if (r == -EPERM) {
-			log_err(_("No device header detected with this passphrase.\n"));
-			eperm = 1;
-		}
-
-		if (r < 0) {
-			crypt_safe_free(CONST_CAST(char*)params->passphrase);
-			params->passphrase = NULL;
-			params->passphrase_size = 0;
-		}
-		check_signal(&r);
-	} while (r == -EPERM && (--tries > 0));
-
-	/* Report wrong passphrase if at least one try failed */
-	if (eperm && r == -EPIPE)
-		r = -EPERM;
 
 	return r;
 }
@@ -289,11 +214,10 @@ static int action_open_tcrypt(void)
 	struct crypt_params_tcrypt params = {
 		.keyfiles = opt_keyfiles,
 		.keyfiles_count = opt_keyfiles_count,
-		.flags = CRYPT_TCRYPT_LEGACY_MODES |
-			 (opt_veracrypt ? CRYPT_TCRYPT_VERA_MODES : 0),
+		.flags = CRYPT_TCRYPT_LEGACY_MODES,
 	};
 	const char *activated_name;
-	uint32_t activate_flags = 0;
+	uint32_t flags = 0;
 	int r;
 
 	activated_name = opt_test_passphrase ? NULL : action_argv[1];
@@ -301,15 +225,33 @@ static int action_open_tcrypt(void)
 	if ((r = crypt_init(&cd, action_argv[0])))
 		goto out;
 
-	r = tcrypt_load(cd, &params);
+	/* TCRYPT header is encrypted, get passphrase now */
+	r = tools_get_key(_("Enter passphrase: "),
+			  CONST_CAST(char**)&params.passphrase,
+			  &params.passphrase_size, 0, 0, NULL, opt_timeout,
+			  _verify_passphrase(0), 0, cd);
 	if (r < 0)
 		goto out;
 
-	_set_activation_flags(&activate_flags);
+	if (opt_tcrypt_hidden)
+		params.flags |= CRYPT_TCRYPT_HIDDEN_HEADER;
+
+	if (opt_tcrypt_system)
+		params.flags |= CRYPT_TCRYPT_SYSTEM_HEADER;
+
+	r = crypt_load(cd, CRYPT_TCRYPT, &params);
+	check_signal(&r);
+	if (r < 0)
+		goto out;
+
+	if (opt_readonly)
+		flags |= CRYPT_ACTIVATE_READONLY;
 
 	if (activated_name)
-		r = crypt_activate_by_volume_key(cd, activated_name, NULL, 0, activate_flags);
+		r = crypt_activate_by_volume_key(cd, activated_name, NULL, 0, flags);
 out:
+	if (r == -EPERM)
+		log_err(_("No device header detected with this passphrase.\n"));
 	crypt_free(cd);
 	crypt_safe_free(CONST_CAST(char*)params.passphrase);
 	return r;
@@ -363,15 +305,29 @@ static int action_tcryptDump(void)
 	struct crypt_params_tcrypt params = {
 		.keyfiles = opt_keyfiles,
 		.keyfiles_count = opt_keyfiles_count,
-		.flags = CRYPT_TCRYPT_LEGACY_MODES |
-			 (opt_veracrypt ? CRYPT_TCRYPT_VERA_MODES : 0),
+		.flags = CRYPT_TCRYPT_LEGACY_MODES,
 	};
 	int r;
 
 	if ((r = crypt_init(&cd, action_argv[0])))
 		goto out;
 
-	r = tcrypt_load(cd, &params);
+	/* TCRYPT header is encrypted, get passphrase now */
+	r = tools_get_key(_("Enter passphrase: "),
+			  CONST_CAST(char**)&params.passphrase,
+			  &params.passphrase_size, 0, 0, NULL, opt_timeout,
+			  _verify_passphrase(0), 0, cd);
+	if (r < 0)
+		goto out;
+
+	if (opt_tcrypt_hidden)
+		params.flags |= CRYPT_TCRYPT_HIDDEN_HEADER;
+
+	if (opt_tcrypt_system)
+		params.flags |= CRYPT_TCRYPT_SYSTEM_HEADER;
+
+	r = crypt_load(cd, CRYPT_TCRYPT, &params);
+	check_signal(&r);
 	if (r < 0)
 		goto out;
 
@@ -380,6 +336,8 @@ static int action_tcryptDump(void)
 	else
 		r = crypt_dump(cd);
 out:
+	if (r == -EPERM)
+		log_err(_("No device header detected with this passphrase.\n"));
 	crypt_free(cd);
 	crypt_safe_free(CONST_CAST(char*)params.passphrase);
 	return r;
@@ -446,10 +404,10 @@ static int action_status(void)
 				ci == CRYPT_BUSY ? " and is in use" : "");
 
 		r = crypt_init_by_name_and_header(&cd, action_argv[0], opt_header_device);
-		if (r < 0)
+		if (r < 0 || !crypt_get_type(cd))
 			goto out;
 
-		log_std("  type:    %s\n", crypt_get_type(cd) ?: "n/a");
+		log_std("  type:    %s\n", crypt_get_type(cd));
 
 		r = crypt_get_active_device(cd, action_argv[0], &cad);
 		if (r < 0)
@@ -470,13 +428,8 @@ static int action_status(void)
 			log_std("  skipped: %" PRIu64 " sectors\n", cad.iv_offset);
 		log_std("  mode:    %s\n", cad.flags & CRYPT_ACTIVATE_READONLY ?
 					   "readonly" : "read/write");
-		if (cad.flags & (CRYPT_ACTIVATE_ALLOW_DISCARDS|
-				 CRYPT_ACTIVATE_ALLOW_DISCARDS|
-				 CRYPT_ACTIVATE_SUBMIT_FROM_CRYPT_CPUS))
-			log_std("  flags:   %s%s%s\n",
-				(cad.flags & CRYPT_ACTIVATE_ALLOW_DISCARDS) ? "discards " : "",
-				(cad.flags & CRYPT_ACTIVATE_SAME_CPU_CRYPT) ? "same_cpu_crypt " : "",
-				(cad.flags & CRYPT_ACTIVATE_SUBMIT_FROM_CRYPT_CPUS) ? "submit_from_crypt_cpus" : "");
+		if (cad.flags & CRYPT_ACTIVATE_ALLOW_DISCARDS)
+			log_std("  flags:   discards\n");
 	}
 out:
 	crypt_free(cd);
@@ -497,29 +450,6 @@ static int action_benchmark_kdf(const char *hash)
 	else
 		log_std("PBKDF2-%-9s %7" PRIu64 " iterations per second\n",
 			hash, kdf_iters);
-	return r;
-}
-
-static int benchmark_cipher_loop(const char *cipher, const char *cipher_mode,
-				 size_t volume_key_size, size_t iv_size,
-				 double *encryption_mbs, double *decryption_mbs)
-{
-	int r, buffer_size = 1024 * 1024;
-
-	do {
-		r = crypt_benchmark(NULL, cipher, cipher_mode,
-				    volume_key_size, iv_size, buffer_size,
-				    encryption_mbs, decryption_mbs);
-		if (r == -ERANGE) {
-			if (buffer_size < 1024 * 1024 * 65)
-				buffer_size *= 2;
-			else {
-				log_err(_("Result of benchmark is not reliable.\n"));
-				r = -ENOENT;
-			}
-		}
-	} while (r == -ERANGE);
-
 	return r;
 }
 
@@ -552,6 +482,7 @@ static int action_benchmark(void)
 	double enc_mbr = 0, dec_mbr = 0;
 	int key_size = (opt_key_size ?: DEFAULT_PLAIN_KEYBITS);
 	int iv_size = 16, skipped = 0;
+	int buffer_size = 1024 * 1024;
 	char *c;
 	int i, r;
 
@@ -573,12 +504,9 @@ static int action_benchmark(void)
 		    strstr(cipher, "cast5"))
 			iv_size = 8;
 
-		if (!strcmp(cipher_mode, "ecb"))
-			iv_size = 0;
-
-		r = benchmark_cipher_loop(cipher, cipher_mode,
-					  key_size / 8, iv_size,
-					  &enc_mbr, &dec_mbr);
+		r = crypt_benchmark(NULL, cipher, cipher_mode,
+				    key_size / 8, iv_size, buffer_size,
+				    &enc_mbr, &dec_mbr);
 		if (!r) {
 			log_std(N_("#  Algorithm | Key |  Encryption |  Decryption\n"));
 			log_std("%8s-%s  %4db  %6.1f MiB/s  %6.1f MiB/s\n",
@@ -593,9 +521,9 @@ static int action_benchmark(void)
 				break;
 		}
 		for (i = 0; bciphers[i].cipher; i++) {
-			r = benchmark_cipher_loop(bciphers[i].cipher, bciphers[i].mode,
+			r = crypt_benchmark(NULL, bciphers[i].cipher, bciphers[i].mode,
 					    bciphers[i].key_size, bciphers[i].iv_size,
-					    &enc_mbr, &dec_mbr);
+					    buffer_size, &enc_mbr, &dec_mbr);
 			check_signal(&r);
 			if (r == -ENOTSUP || r == -EINTR)
 				break;
@@ -607,10 +535,10 @@ static int action_benchmark(void)
 			snprintf(cipher, MAX_CIPHER_LEN, "%s-%s",
 				 bciphers[i].cipher, bciphers[i].mode);
 			if (!r)
-				log_std("%12s  %4zub  %6.1f MiB/s  %6.1f MiB/s\n",
+				log_std("%12s  %4db  %6.1f MiB/s  %6.1f MiB/s\n",
 					cipher, bciphers[i].key_size*8, enc_mbr, dec_mbr);
 			else
-				log_std("%12s  %4zub %13s %13s\n", cipher,
+				log_std("%12s  %4db %13s %13s\n", cipher,
 					bciphers[i].key_size*8, _("N/A"), _("N/A"));
 		}
 		if (skipped && skipped == i)
@@ -763,10 +691,16 @@ static int action_open_luks(void)
 	struct crypt_device *cd = NULL;
 	const char *data_device, *header_device, *activated_name;
 	char *key = NULL;
-	uint32_t activate_flags = 0;
+	uint32_t flags = 0;
 	int r, keysize;
 
-	header_device = uuid_or_device_header(&data_device);
+	if (opt_header_device) {
+		header_device = uuid_or_device(opt_header_device);
+		data_device = action_argv[0];
+	} else {
+		header_device = uuid_or_device(action_argv[0]);
+		data_device = NULL;
+	}
 
 	activated_name = opt_test_passphrase ? NULL : action_argv[1];
 
@@ -793,7 +727,11 @@ static int action_open_luks(void)
 	if (opt_iteration_time)
 		crypt_set_iteration_time(cd, opt_iteration_time);
 
-	_set_activation_flags(&activate_flags);
+	if (opt_readonly)
+		flags |= CRYPT_ACTIVATE_READONLY;
+
+	if (opt_allow_discards)
+		flags |= CRYPT_ACTIVATE_ALLOW_DISCARDS;
 
 	if (opt_master_key_file) {
 		keysize = crypt_get_volume_key_size(cd);
@@ -801,15 +739,15 @@ static int action_open_luks(void)
 		if (r < 0)
 			goto out;
 		r = crypt_activate_by_volume_key(cd, activated_name,
-						 key, keysize, activate_flags);
+						 key, keysize, flags);
 	} else if (opt_key_file) {
 		crypt_set_password_retry(cd, 1);
 		r = crypt_activate_by_keyfile_offset(cd, activated_name,
 			opt_key_slot, opt_key_file, opt_keyfile_size,
-			opt_keyfile_offset, activate_flags);
+			opt_keyfile_offset, flags);
 	} else
 		r = crypt_activate_by_passphrase(cd, activated_name,
-			opt_key_slot, NULL, 0, activate_flags);
+			opt_key_slot, NULL, 0, flags);
 out:
 	crypt_safe_free(key);
 	crypt_free(cd);
@@ -866,7 +804,7 @@ static int action_luksKillSlot(void)
 	struct crypt_device *cd = NULL;
 	int r;
 
-	if ((r = crypt_init(&cd, uuid_or_device_header(NULL))))
+	if ((r = crypt_init(&cd, uuid_or_device(action_argv[0]))))
 		goto out;
 
 	crypt_set_confirm_callback(cd, yesDialog, NULL);
@@ -909,7 +847,7 @@ static int action_luksRemoveKey(void)
 	size_t passwordLen;
 	int r;
 
-	if ((r = crypt_init(&cd, uuid_or_device_header(NULL))))
+	if ((r = crypt_init(&cd, uuid_or_device(action_argv[0]))))
 		goto out;
 
 	crypt_set_confirm_callback(cd, yesDialog, NULL);
@@ -960,7 +898,7 @@ static int action_luksAddKey(void)
 	size_t password_size = 0, password_new_size = 0;
 	struct crypt_device *cd = NULL;
 
-	if ((r = crypt_init(&cd, uuid_or_device_header(NULL))))
+	if ((r = crypt_init(&cd, uuid_or_device(action_argv[0]))))
 		goto out;
 
 	crypt_set_confirm_callback(cd, yesDialog, NULL);
@@ -979,22 +917,9 @@ static int action_luksAddKey(void)
 		r = _read_mk(opt_master_key_file, &key, keysize);
 		if (r < 0)
 			goto out;
-
-		r = crypt_volume_key_verify(cd, key, keysize);
-		check_signal(&r);
-		if (r < 0)
-			goto out;
-
-		r = tools_get_key(_("Enter new passphrase for key slot: "),
-				  &password_new, &password_new_size,
-				  opt_new_keyfile_offset, opt_new_keyfile_size,
-				  opt_new_key_file, opt_timeout,
-				  _verify_passphrase(1), 1, cd);
-		if (r < 0)
-			goto out;
-
-		r = crypt_keyslot_add_by_volume_key(cd, opt_key_slot, key, keysize,
-						    password_new, password_new_size);
+		//FIXME: process keyfile arg
+		r = crypt_keyslot_add_by_volume_key(cd, opt_key_slot,
+						    key, keysize, NULL, 0);
 	} else if (opt_key_file || opt_new_key_file) {
 		r = crypt_keyslot_add_by_keyfile_offset(cd, opt_key_slot,
 			opt_key_file, opt_keyfile_size, opt_keyfile_offset,
@@ -1016,7 +941,7 @@ static int action_luksAddKey(void)
 
 		r = tools_get_key(_("Enter new passphrase for key slot: "),
 				  &password_new, &password_new_size, 0, 0, NULL,
-				  opt_timeout, _verify_passphrase(1), 1, cd);
+				  opt_timeout, _verify_passphrase(0), 1, cd);
 		if (r < 0)
 			goto out;
 
@@ -1040,7 +965,7 @@ static int action_luksChangeKey(void)
 	size_t password_size = 0, password_new_size = 0;
 	int r;
 
-	if ((r = crypt_init(&cd, uuid_or_device_header(NULL))))
+	if ((r = crypt_init(&cd, uuid_or_device(action_argv[0]))))
 		goto out;
 
 	if ((r = crypt_load(cd, CRYPT_LUKS1, NULL)))
@@ -1067,7 +992,7 @@ static int action_luksChangeKey(void)
 			  &password_new, &password_new_size,
 			  opt_new_keyfile_offset, opt_new_keyfile_size,
 			  opt_new_key_file,
-			  opt_timeout, _verify_passphrase(1), 1, cd);
+			  opt_timeout, _verify_passphrase(0), 1, cd);
 	if (r < 0)
 		goto out;
 
@@ -1091,7 +1016,7 @@ static int action_isLuks(void)
 		return -ENODEV;
 	}
 
-	if ((r = crypt_init(&cd, uuid_or_device_header(NULL))))
+	if ((r = crypt_init(&cd, action_argv[0])))
 		goto out;
 
 	crypt_set_log_callback(cd, quiet_log, NULL);
@@ -1107,7 +1032,7 @@ static int action_luksUUID(void)
 	const char *existing_uuid = NULL;
 	int r;
 
-	if ((r = crypt_init(&cd, uuid_or_device_header(NULL))))
+	if ((r = crypt_init(&cd, action_argv[0])))
 		goto out;
 
 	crypt_set_confirm_callback(cd, yesDialog, NULL);
@@ -1186,7 +1111,7 @@ static int action_luksDump(void)
 	struct crypt_device *cd = NULL;
 	int r;
 
-	if ((r = crypt_init(&cd, uuid_or_device_header(NULL))))
+	if ((r = crypt_init(&cd, uuid_or_device(action_argv[0]))))
 		goto out;
 
 	if ((r = crypt_load(cd, CRYPT_LUKS1, NULL)))
@@ -1206,7 +1131,7 @@ static int action_luksSuspend(void)
 	struct crypt_device *cd = NULL;
 	int r;
 
-	r = crypt_init_by_name_and_header(&cd, action_argv[0], uuid_or_device(opt_header_device));
+	r = crypt_init_by_name_and_header(&cd, action_argv[0], opt_header_device);
 	if (!r)
 		r = crypt_suspend(cd, action_argv[0]);
 
@@ -1219,7 +1144,7 @@ static int action_luksResume(void)
 	struct crypt_device *cd = NULL;
 	int r;
 
-	if ((r = crypt_init_by_name_and_header(&cd, action_argv[0], uuid_or_device(opt_header_device))))
+	if ((r = crypt_init_by_name_and_header(&cd, action_argv[0], opt_header_device)))
 		goto out;
 
 	crypt_set_timeout(cd, opt_timeout);
@@ -1247,7 +1172,7 @@ static int action_luksBackup(void)
 		return -EINVAL;
 	}
 
-	if ((r = crypt_init(&cd, uuid_or_device_header(NULL))))
+	if ((r = crypt_init(&cd, uuid_or_device(action_argv[0]))))
 		goto out;
 
 	crypt_set_confirm_callback(cd, yesDialog, NULL);
@@ -1268,7 +1193,7 @@ static int action_luksRestore(void)
 		return -EINVAL;
 	}
 
-	if ((r = crypt_init(&cd, uuid_or_device_header(NULL))))
+	if ((r = crypt_init(&cd, action_argv[0])))
 		goto out;
 
 	crypt_set_confirm_callback(cd, yesDialog, NULL);
@@ -1308,47 +1233,6 @@ args:
 	return -EINVAL;
 }
 
-static int action_luksErase(void)
-{
-	struct crypt_device *cd = NULL;
-	crypt_keyslot_info ki;
-	char *msg = NULL;
-	int i, r;
-
-	if ((r = crypt_init(&cd, uuid_or_device_header(NULL))))
-		goto out;
-
-	crypt_set_confirm_callback(cd, yesDialog, NULL);
-
-	if ((r = crypt_load(cd, CRYPT_LUKS1, NULL)))
-		goto out;
-
-	if(asprintf(&msg, _("This operation will erase all keyslots on device %s.\n"
-			    "Device will become unusable after this operation."),
-			    uuid_or_device_header(NULL)) == -1) {
-		r = -ENOMEM;
-		goto out;
-	}
-
-	if (!yesDialog(msg, NULL)) {
-		r = -EPERM;
-		goto out;
-	}
-
-	for (i = 0; i < crypt_keyslot_max(CRYPT_LUKS1); i++) {
-		ki = crypt_keyslot_status(cd, i);
-		if (ki == CRYPT_SLOT_ACTIVE || ki == CRYPT_SLOT_ACTIVE_LAST) {
-			r = crypt_keyslot_destroy(cd, i);
-			if (r < 0)
-				goto out;
-		}
-	}
-out:
-	free(msg);
-	crypt_free(cd);
-	return r;
-}
-
 static struct action_type {
 	const char *type;
 	int (*handler)(void);
@@ -1363,7 +1247,6 @@ static struct action_type {
 	{ "status",       action_status,       1, 0, N_("<name>"), N_("show device status") },
 	{ "benchmark",    action_benchmark,    0, 0, N_("<name>"), N_("benchmark cipher") },
 	{ "repair",       action_luksRepair,   1, 1, N_("<device>"), N_("try to repair on-disk metadata") },
-	{ "erase",        action_luksErase ,   1, 1, N_("<device>"), N_("erase all keyslots (remove encryption key)") },
 	{ "luksFormat",   action_luksFormat,   1, 1, N_("<device> [<new key file>]"), N_("formats a LUKS device") },
 	{ "luksAddKey",   action_luksAddKey,   1, 1, N_("<device> [<new key file>]"), N_("add key to LUKS device") },
 	{ "luksRemoveKey",action_luksRemoveKey,1, 1, N_("<device> [<key file>]"), N_("removes supplied key or key file from LUKS device") },
@@ -1507,12 +1390,8 @@ int main(int argc, const char **argv)
 		{ "test-passphrase",   '\0', POPT_ARG_NONE, &opt_test_passphrase,       0, N_("Do not activate device, just check passphrase."), NULL },
 		{ "tcrypt-hidden",     '\0', POPT_ARG_NONE, &opt_tcrypt_hidden,         0, N_("Use hidden header (hidden TCRYPT device)."), NULL },
 		{ "tcrypt-system",     '\0', POPT_ARG_NONE, &opt_tcrypt_system,         0, N_("Device is system TCRYPT drive (with bootloader)."), NULL },
-		{ "tcrypt-backup",     '\0', POPT_ARG_NONE, &opt_tcrypt_backup,         0, N_("Use backup (secondary) TCRYPT header."), NULL },
-		{ "veracrypt",         '\0', POPT_ARG_NONE, &opt_veracrypt,             0, N_("Scan also for VeraCrypt compatible device."), NULL },
 		{ "type",               'M', POPT_ARG_STRING, &opt_type,                0, N_("Type of device metadata: luks, plain, loopaes, tcrypt."), NULL },
 		{ "force-password",    '\0', POPT_ARG_NONE, &opt_force_password,        0, N_("Disable password quality check (if enabled)."), NULL },
-		{ "perf-same_cpu_crypt",'\0', POPT_ARG_NONE, &opt_perf_same_cpu_crypt,  0, N_("Use dm-crypt same_cpu_crypt performance compatibility option."), NULL },
-		{ "perf-submit_from_crypt_cpus",'\0', POPT_ARG_NONE, &opt_perf_submit_from_crypt_cpus,0,N_("Use dm-crypt submit_from_crypt_cpus performance compatibility option."), NULL },
 		POPT_TABLEEND
 	};
 	poptContext popt_context;
@@ -1525,6 +1404,8 @@ int main(int argc, const char **argv)
 	setlocale(LC_ALL, "");
 	bindtextdomain(PACKAGE, LOCALEDIR);
 	textdomain(PACKAGE);
+
+	crypt_fips_self_check(NULL);
 
 	popt_context = poptGetContext(PACKAGE, argc, argv, popt_options, 0);
 	poptSetOtherOptionHelp(popt_context,
@@ -1567,10 +1448,6 @@ int main(int argc, const char **argv)
 	if (r < -1)
 		usage(popt_context, EXIT_FAILURE, poptStrerror(r),
 		      poptBadOption(popt_context, POPT_BADOPTION_NOALIAS));
-
-	if (crypt_fips_mode())
-		crypt_log(NULL, CRYPT_LOG_VERBOSE, _("Running in FIPS mode.\n"));
-
 	if (opt_version_mode) {
 		log_std("%s %s\n", PACKAGE_NAME, PACKAGE_VERSION);
 		poptFreeContext(popt_context);
@@ -1613,17 +1490,12 @@ int main(int argc, const char **argv)
 	} else if (!strcmp(aname, "tcryptOpen")) {
 		aname = "open";
 		opt_type = "tcrypt";
-	} else if (!strcmp(aname, "tcryptDump")) {
-		opt_type = "tcrypt";
 	} else if (!strcmp(aname, "remove") ||
 		   !strcmp(aname, "plainClose") ||
 		   !strcmp(aname, "luksClose") ||
 		   !strcmp(aname, "loopaesClose") ||
 		   !strcmp(aname, "tcryptClose")) {
 		aname = "close";
-	} else if (!strcmp(aname, "luksErase")) {
-		aname = "erase";
-		opt_type = "luks";
 	}
 
 	for(action = action_types; action->type; action++)
@@ -1719,20 +1591,10 @@ int main(int argc, const char **argv)
 		_("Option --offset is supported only for open of plain and loopaes devices.\n"),
 		poptGetInvocationName(popt_context));
 
-	if ((opt_tcrypt_hidden || opt_tcrypt_system || opt_tcrypt_backup) && strcmp(aname, "tcryptDump") &&
+	if ((opt_tcrypt_hidden || opt_tcrypt_system) && strcmp(aname, "tcryptDump") &&
 	    (strcmp(aname, "open") || strcmp(opt_type, "tcrypt")))
 		usage(popt_context, EXIT_FAILURE,
-		_("Option --tcrypt-hidden, --tcrypt-system or --tcrypt-backup is supported only for TCRYPT device.\n"),
-		poptGetInvocationName(popt_context));
-
-	if (opt_tcrypt_hidden && opt_allow_discards)
-		usage(popt_context, EXIT_FAILURE,
-		_("Option --tcrypt-hidden cannot be combined with --allow-discards.\n"),
-		poptGetInvocationName(popt_context));
-
-	if (opt_veracrypt && strcmp(opt_type, "tcrypt"))
-		usage(popt_context, EXIT_FAILURE,
-		_("Option --veracrypt is supported only for TCRYPT device type.\n"),
+		_("Option --tcrypt-hidden or --tcrypt-system is supported only for TCRYPT device.\n"),
 		poptGetInvocationName(popt_context));
 
 	if (opt_debug) {

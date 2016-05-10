@@ -2,7 +2,7 @@
  * OPENSSL crypto backend implementation
  *
  * Copyright (C) 2010-2012, Red Hat, Inc. All rights reserved.
- * Copyright (C) 2010-2014, Milan Broz
+ * Copyright (C) 2010-2012, Milan Broz
  *
  * This file is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -133,7 +133,7 @@ int crypt_hash_final(struct crypt_hash *ctx, char *buffer, size_t length)
 		return -EINVAL;
 
 	memcpy(buffer, tmp, length);
-	crypt_backend_memzero(tmp, sizeof(tmp));
+	memset(tmp, 0, sizeof(tmp));
 
 	if (tmp_len < length)
 		return -EINVAL;
@@ -203,7 +203,7 @@ int crypt_hmac_final(struct crypt_hmac *ctx, char *buffer, size_t length)
 	HMAC_Final(&ctx->md, tmp, &tmp_len);
 
 	memcpy(buffer, tmp, length);
-	crypt_backend_memzero(tmp, sizeof(tmp));
+	memset(tmp, 0, sizeof(tmp));
 
 	if (tmp_len < length)
 		return -EINVAL;

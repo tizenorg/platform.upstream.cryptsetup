@@ -1,7 +1,7 @@
 /*
  * FIPS mode utilities
  *
- * Copyright (C) 2011-2015, Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2011-2012, Red Hat, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -18,29 +18,45 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <stdlib.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
+#include "libcryptsetup.h"
+#include "nls.h"
 #include "utils_fips.h"
 
 #if !ENABLE_FIPS
 int crypt_fips_mode(void) { return 0; }
+void crypt_fips_libcryptsetup_check(struct crypt_device *cd) {}
+void crypt_fips_self_check(struct crypt_device *cd) {}
 #else
-static int kernel_fips_mode(void)
-{
-	int fd;
-	char buf[1] = "";
-
-	if ((fd = open("/proc/sys/crypto/fips_enabled", O_RDONLY)) >= 0) {
-		while (read(fd, buf, sizeof(buf)) < 0 && errno == EINTR);
-		close(fd);
-	}
-
-	return (buf[0] == '1') ? 1 : 0;
-}
+#include <fipscheck.h>
 
 int crypt_fips_mode(void)
 {
-	return kernel_fips_mode() && !access("/etc/system-fips", F_OK);
+	return FIPSCHECK_kernel_fips_mode();
+}
+
+static void crypt_fips_verify(struct crypt_device *cd,
+			       const char *name, const char *function)
+{
+	if (!crypt_fips_mode())
+		return;
+
+	if (!FIPSCHECK_verify(name, function)) {
+		crypt_log(cd, CRYPT_LOG_ERROR, _("FIPS checksum verification failed.\n"));
+		_exit(EXIT_FAILURE);
+	}
+
+	crypt_log(cd, CRYPT_LOG_VERBOSE, _("Running in FIPS mode.\n"));
+}
+
+void crypt_fips_libcryptsetup_check(struct crypt_device *cd)
+{
+	crypt_fips_verify(cd, LIBCRYPTSETUP_VERSION_FIPS, "crypt_init");
+}
+
+void crypt_fips_self_check(struct crypt_device *cd)
+{
+	crypt_fips_verify(cd, NULL, NULL);
 }
 #endif /* ENABLE_FIPS */
