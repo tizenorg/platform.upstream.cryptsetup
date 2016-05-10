@@ -1,12 +1,12 @@
-Name:     cryptsetup
-Summary:  The cryptsetup
-Version:  1.6
-Release:  1
-License:  GPL-2.0
-Group:    Base/Device Management
-URL:      http://code.google.com/p/cryptsetup/
-Source0:  %{name}-%{version}.tar.gz
-Source1:  cryptsetup.manifest
+Name: cryptsetup
+Summary: A utility for setting up encrypted disks
+Version: 1.6.7
+Release: 1
+License: GPL-2.0
+Group: Base/Device Management
+URL: https://gitlab.com/cryptsetup/cryptsetup
+Source0: cryptsetup-%{version}.tar.xz
+Source1: cryptsetup.manifest
 
 BuildRequires: linux-kernel-headers
 BuildRequires: device-mapper-devel
@@ -18,36 +18,42 @@ BuildRequires: popt-devel
 BuildRequires: automake
 BuildRequires: gettext
 
-Requires:      libgpg-error
-Requires:      libdevmapper
-Requires:      libgcrypt
+Requires: libgpg-error
+Requires: libdevmapper
+Requires: libgcrypt
 
 %description
-setup cryptographic volumes for dm-crypt (including LUKS extension)
+The cryptsetup package contains a utility for setting up
+disk encryption using dm-crypt kernel module.
 
 %package devel
-Summary:    The cryptsetup development package
-Group:      Development/Libraries
-License:    LGPL-2.1
-Requires:   %{name} = %{version}-%{release}
+Summary: Headers and libraries for using encrypted file systems
+Group: Development/Libraries
+License: LGPL-2.1
+Requires: %{name} = %{version}-%{release}
+Requires: libgcrypt-devel > 1.1.42
+Requires: device-mapper-devel
+Requires: libuuid-devel
+Requires: pkgconfig
 
 %description devel
-cryptsetup development package
+The cryptsetup-devel package contains libraries and header files
+used for writing code that makes use of disk encryption.
 
 %package locale
-License:    GPL-2.0
-Summary:    The cryptsetup locale package
-Group:      Base/Device Management
-Requires:   %{name} = %{version}-%{release}
+Summary: Cryptsetup locale package
+Group: Base/Device Management
+License: GPL-2.0
+Requires: %{name} = %{version}-%{release}
 
 %description locale
 locale package for cryptsetup
 
-%package doc 
-License:    GPL-2.0
-Summary:    The cryptsetup doc package
-Group:      Base/Device Management
-Requires:   %{name} = %{version}-%{release}
+%package doc
+Summary: Cryptsetup doc package
+Group: Base/Device Management
+License: GPL-2.0
+Requires: %{name} = %{version}-%{release}
 
 %description doc
 doc package for cryptsetup
@@ -76,7 +82,7 @@ cp -a %{SOURCE1} %{buildroot}%{_datadir}/binary_package_name.manifest
 %manifest %{_datadir}/binary_package_name.manifest
 %{_prefix}/lib/libcryptsetup.so
 %{_prefix}/lib/libcryptsetup.so.4
-%{_prefix}/lib/libcryptsetup.so.4.5.0
+%{_prefix}/lib/libcryptsetup.so.4.7.0
 %{_prefix}/sbin/cryptsetup
 %{_prefix}/sbin/veritysetup
 
@@ -97,6 +103,7 @@ cp -a %{SOURCE1} %{buildroot}%{_datadir}/binary_package_name.manifest
 %{_prefix}/share/locale/sv/LC_MESSAGES/cryptsetup.mo
 %{_prefix}/share/locale/uk/LC_MESSAGES/cryptsetup.mo
 %{_prefix}/share/locale/vi/LC_MESSAGES/cryptsetup.mo
+%{_prefix}/share/locale/es/LC_MESSAGES/cryptsetup.mo
 
 %files doc
 %{_prefix}/share/man/man8/cryptsetup.8.gz
