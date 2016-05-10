@@ -1,12 +1,11 @@
 AC_PREREQ([2.67])
-AC_INIT([cryptsetup],[1.7.0-git])
+AC_INIT([cryptsetup],[1.6.7])
 
 dnl library version from <major>.<minor>.<release>[-<suffix>]
 LIBCRYPTSETUP_VERSION=$(echo $PACKAGE_VERSION | cut -f1 -d-)
-LIBCRYPTSETUP_VERSION_INFO=9:0:5
-dnl library file name for FIPS selfcheck
-LIBCRYPTSETUP_VERSION_FIPS="libcryptsetup.so.4"
+LIBCRYPTSETUP_VERSION_INFO=11:0:7
 
+AM_SILENT_RULES([yes])
 AC_CONFIG_SRCDIR(src/cryptsetup.c)
 AC_CONFIG_MACRO_DIR([m4])
 
@@ -16,8 +15,8 @@ AC_CONFIG_HEADERS([config.h:config.h.in])
 # http://lists.gnu.org/archive/html/automake/2013-01/msg00060.html
 
 # For old automake use this
-#AM_INIT_AUTOMAKE(dist-bzip2)
-AM_INIT_AUTOMAKE([dist-bzip2 1.12 serial-tests])
+#AM_INIT_AUTOMAKE(dist-xz)
+AM_INIT_AUTOMAKE([dist-xz 1.12 serial-tests])
 
 if test "x$prefix" = "xNONE"; then
 	sysconfdir=/etc
@@ -48,7 +47,8 @@ AC_CHECK_LIB(uuid, uuid_clear, ,[AC_MSG_ERROR([You need the uuid library.])])
 AC_SUBST(UUID_LIBS, $LIBS)
 LIBS=$saved_LIBS
 
-AC_CHECK_FUNCS([posix_memalign])
+AC_SEARCH_LIBS([clock_gettime],[rt posix4])
+AC_CHECK_FUNCS([posix_memalign clock_gettime])
 
 if test "x$enable_largefile" = "xno" ; then
   AC_MSG_ERROR([Building with --disable-largefile is not supported, it can cause data corruption.])
@@ -60,6 +60,7 @@ AC_TYPE_OFF_T
 AC_SYS_LARGEFILE
 AC_FUNC_FSEEKO
 AC_PROG_GCC_TRADITIONAL
+AC_FUNC_STRERROR_R
 
 dnl ==========================================================================
 
@@ -75,25 +76,17 @@ AC_SUBST(POPT_LIBS, $LIBS)
 LIBS=$saved_LIBS
 
 dnl ==========================================================================
-dnl FIPS extensions
+dnl FIPS extensions (only for RHEL)
 AC_ARG_ENABLE([fips], AS_HELP_STRING([--enable-fips],[enable FIPS mode restrictions]),
 [with_fips=$enableval],
 [with_fips=no])
 
 if test "x$with_fips" = "xyes"; then
 	AC_DEFINE(ENABLE_FIPS, 1, [Enable FIPS mode restrictions])
-	AC_DEFINE_UNQUOTED(LIBCRYPTSETUP_VERSION_FIPS, ["$LIBCRYPTSETUP_VERSION_FIPS"],
-		[library file name for FIPS selfcheck])
 
 	if test "x$enable_static" = "xyes" -o "x$enable_static_cryptsetup" = "xyes" ; then
 		AC_MSG_ERROR([Static build is not compatible with FIPS.])
 	fi
-
-	saved_LIBS=$LIBS
-	AC_CHECK_LIB(fipscheck, FIPSCHECK_verify, ,[AC_MSG_ERROR([You need the fipscheck library.])])
-	AC_SUBST(FIPSCHECK_LIBS, $LIBS)
-	LIBS=$saved_LIBS
-
 fi
 
 AC_DEFUN([NO_FIPS], [
@@ -128,9 +121,21 @@ AC_DEFUN([CONFIGURE_GCRYPT], [
 	fi
 	dnl Check if we can use gcrypt PBKDF2 (1.6.0 supports empty password)
 	AC_ARG_ENABLE([gcrypt-pbkdf2], AS_HELP_STRING([--enable-gcrypt-pbkdf2],[force enable internal gcrypt PBKDF2]),
-		[use_internal_pbkdf2=0],
-		[AM_PATH_LIBGCRYPT([1.6.0], [use_internal_pbkdf2=0], [use_internal_pbkdf2=1])])
+		if test "x$enableval" = "xyes"; then
+			[use_internal_pbkdf2=0]
+		else
+			[use_internal_pbkdf2=1]
+		fi,
+		[AM_PATH_LIBGCRYPT([1.6.1], [use_internal_pbkdf2=0], [use_internal_pbkdf2=1])])
 	AM_PATH_LIBGCRYPT($GCRYPT_REQ_VERSION,,[AC_MSG_ERROR([You need the gcrypt library.])])
+
+	AC_MSG_CHECKING([if internal cryptsetup PBKDF2 is compiled-in])
+	if test $use_internal_pbkdf2 = 0; then
+		AC_MSG_RESULT([no])
+	else
+		AC_MSG_RESULT([yes])
+		NO_FIPS([])
+	fi
 
 	if test x$enable_static_cryptsetup = xyes; then
 		saved_LIBS=$LIBS
@@ -202,13 +207,13 @@ AC_DEFUN([CONFIGURE_NETTLE], [
 		[AC_MSG_ERROR([You need Nettle cryptographic library.])])
 
 	saved_LIBS=$LIBS
-	AC_CHECK_LIB(nettle, nettle_ripemd160_init,,
-		[AC_MSG_ERROR([You need Nettle library version 2.4 or more recent.])])
+	AC_CHECK_LIB(nettle, nettle_pbkdf2_hmac_sha256,,
+		[AC_MSG_ERROR([You need Nettle library version 2.6 or more recent.])])
 	CRYPTO_LIBS=$LIBS
 	LIBS=$saved_LIBS
 
 	CRYPTO_STATIC_LIBS=$CRYPTO_LIBS
-	use_internal_pbkdf2=1
+	use_internal_pbkdf2=0
 	NO_FIPS([])
 ])
 
@@ -346,7 +351,6 @@ AC_SUBST([CRYPTO_STATIC_LIBS])
 
 AC_SUBST([LIBCRYPTSETUP_VERSION])
 AC_SUBST([LIBCRYPTSETUP_VERSION_INFO])
-AC_SUBST([LIBCRYPTSETUP_VERSION_FIPS])
 
 dnl ==========================================================================
 AC_ARG_ENABLE([dev-random], AS_HELP_STRING([--enable-dev-random],
@@ -377,8 +381,12 @@ AC_ARG_ENABLE([python], AS_HELP_STRING([--enable-python],[enable Python bindings
 [with_python=$enableval],
 [with_python=no])
 
+AC_ARG_WITH([python_version],
+	AS_HELP_STRING([--with-python_version=VERSION], [required Python version [2.6]]),
+	[PYTHON_VERSION=$withval], [PYTHON_VERSION=2.6])
+
 if test "x$with_python" = "xyes"; then
-	AM_PATH_PYTHON([2.4])
+	AM_PATH_PYTHON([$PYTHON_VERSION])
 
 	if ! test -x "$PYTHON-config" ; then
             AC_MSG_ERROR([Cannot find python development packages to build bindings])
@@ -386,6 +394,9 @@ if test "x$with_python" = "xyes"; then
 
 	PYTHON_INCLUDES=$($PYTHON-config --includes)
 	AC_SUBST(PYTHON_INCLUDES)
+
+	PYTHON_LIBS=$($PYTHON-config --libs)
+	AC_SUBST(PYTHON_LIBS)
 fi
 AM_CONDITIONAL([PYTHON_CRYPTSETUP], [test "x$with_python" = "xyes"])
 
