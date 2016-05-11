@@ -1,10 +1,10 @@
 /*
  * libcryptsetup - cryptsetup library
  *
- * Copyright (C) 2004, Christophe Saout <christophe@saout.de>
+ * Copyright (C) 2004, Jana Saout <jana@saout.de>
  * Copyright (C) 2004-2007, Clemens Fruhwirth <clemens@endorphin.org>
- * Copyright (C) 2009-2012, Red Hat, Inc. All rights reserved.
- * Copyright (C) 2009-2012, Milan Broz
+ * Copyright (C) 2009-2015, Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2009-2015, Milan Broz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -176,6 +176,8 @@ void crypt_set_confirm_callback(struct crypt_device *cd,
  * @note Only zero terminated passwords can be entered this way, for complex
  *   use API functions directly.
  * @note Maximal length of password is limited to @e length @e - @e 1 (minimal 511 chars)
+ * @note Internal compiled-in terminal input is DEPRECATED and will be removed
+ *   in future versions.
  *
  * @see Callback function is used in these call provided, that certain conditions are met:
  * @li crypt_keyslot_add_by_passphrase
@@ -304,7 +306,7 @@ int crypt_memory_lock(struct crypt_device *cd, int lock);
 #define CRYPT_LOOPAES "LOOPAES"
 /** dm-verity mode */
 #define CRYPT_VERITY "VERITY"
-/** TCRYPT (TrueCrypt-compatible) mode */
+/** TCRYPT (TrueCrypt-compatible and VeraCrypt-compatible) mode */
 #define CRYPT_TCRYPT "TCRYPT"
 
 /**
@@ -403,7 +405,7 @@ struct crypt_params_tcrypt {
 	uint32_t flags;            /**< CRYPT_TCRYPT* flags */
 };
 
-/** Include legacy modes ehn scannig for header*/
+/** Include legacy modes when scanning for header*/
 #define CRYPT_TCRYPT_LEGACY_MODES    (1 << 0)
 /** Try to load hidden header (describing hidden device) */
 #define CRYPT_TCRYPT_HIDDEN_HEADER   (1 << 1)
@@ -411,6 +413,11 @@ struct crypt_params_tcrypt {
 #define CRYPT_TCRYPT_BACKUP_HEADER   (1 << 2)
 /** Device contains encrypted system (with boot loader) */
 #define CRYPT_TCRYPT_SYSTEM_HEADER   (1 << 3)
+/** Include VeraCrypt modes when scanning for header,
+ *  all other TCRYPT flags applies as well.
+ *  VeraCrypt device is reported as TCRYPT type.
+ */
+#define CRYPT_TCRYPT_VERA_MODES      (1 << 4)
 
 /** @} */
 
@@ -530,6 +537,8 @@ int crypt_suspend(struct crypt_device *cd,
  * @return unlocked key slot number or negative errno otherwise.
  *
  * @note Only LUKS device type is supported
+ * @note If passphrase is @e NULL always use crypt_set_password_callback.
+ * Internal terminal password query is DEPRECATED and will be removed in next version.
  */
 int crypt_resume_by_passphrase(struct crypt_device *cd,
 	const char *name,
@@ -548,6 +557,9 @@ int crypt_resume_by_passphrase(struct crypt_device *cd,
  * @param keyfile_offset number of bytes to skip at start of keyfile
  *
  * @return unlocked key slot number or negative errno otherwise.
+ *
+ * @note If passphrase is @e NULL always use crypt_set_password_callback.
+ * Internal terminal password query is DEPRECATED and will be removed in next version.
  */
 int crypt_resume_by_keyfile_offset(struct crypt_device *cd,
 	const char *name,
@@ -594,6 +606,9 @@ void crypt_free(struct crypt_device *cd);
  * @param new_passphrase_size size of @e new_passphrase (binary data)
  *
  * @return allocated key slot number or negative errno otherwise.
+ *
+ * @note If passphrase is @e NULL always use crypt_set_password_callback.
+ * Internal terminal password query is DEPRECATED and will be removed in next version.
  */
 int crypt_keyslot_add_by_passphrase(struct crypt_device *cd,
 	int keyslot,
@@ -620,6 +635,9 @@ int crypt_keyslot_add_by_passphrase(struct crypt_device *cd,
  * @note This function is just internal implementation of luksChange
  * command to avoid reading of volume key outside libcryptsetup boundary
  * in FIPS mode.
+ *
+ * @note If passphrase is @e NULL always use crypt_set_password_callback.
+ * Internal terminal password query is DEPRECATED and will be removed in next version.
  */
 int crypt_keyslot_change_by_passphrase(struct crypt_device *cd,
 	int keyslot_old,
@@ -646,7 +664,6 @@ int crypt_keyslot_change_by_passphrase(struct crypt_device *cd,
  * @return allocated key slot number or negative errno otherwise.
  *
  * @note Note that @e keyfile can be "-" for STDIN
- *
  */
 int crypt_keyslot_add_by_keyfile_offset(struct crypt_device *cd,
 	int keyslot,
@@ -680,6 +697,8 @@ int crypt_keyslot_add_by_keyfile(struct crypt_device *cd,
  *
  * @return allocated key slot number or negative errno otherwise.
  *
+ * @note If passphrase is @e NULL always use crypt_set_password_callback.
+ * Internal terminal password query is DEPRECATED and will be removed in next version.
  */
 int crypt_keyslot_add_by_volume_key(struct crypt_device *cd,
 	int keyslot,
@@ -725,6 +744,11 @@ int crypt_keyslot_destroy(struct crypt_device *cd, int keyslot);
 #define CRYPT_ACTIVATE_PRIVATE (1 << 4)
 /** corruption detected (verity), output only */
 #define CRYPT_ACTIVATE_CORRUPTED (1 << 5)
+/** use same_cpu_crypt option for dm-crypt */
+#define CRYPT_ACTIVATE_SAME_CPU_CRYPT (1 << 6)
+/** use submit_from_crypt_cpus for dm-crypt */
+#define CRYPT_ACTIVATE_SUBMIT_FROM_CRYPT_CPUS (1 << 7)
+
 
 /**
  * Active device runtime attributes
@@ -763,6 +787,9 @@ int crypt_get_active_device(struct crypt_device *cd,
  * @param flags activation flags
  *
  * @return unlocked key slot number or negative errno otherwise.
+ *
+ * @note If passphrase is @e NULL always use crypt_set_password_callback.
+ * Internal terminal password query is DEPRECATED and will be removed in next version.
  */
 int crypt_activate_by_passphrase(struct crypt_device *cd,
 	const char *name,
@@ -1019,6 +1046,9 @@ int crypt_get_verity_info(struct crypt_device *cd,
  * @param decryption_mbs measured decryption speed in MiB/s
  *
  * @return @e 0 on success or negative errno value otherwise.
+ *
+ * @note If encryption_buffer_size is too small and encryption time
+ *       cannot be properly measured, -ERANGE is returned.
  */
 int crypt_benchmark(struct crypt_device *cd,
 	const char *cipher,
