@@ -1,6 +1,6 @@
 Name:     cryptsetup
 Summary:  The cryptsetup
-Version:  1.6
+Version:  1.6.7
 Release:  1
 License:  GPL-2.0
 Group:    Base/Device Management
@@ -56,6 +56,7 @@ doc package for cryptsetup
 %setup -q
 
 %build
+chmod +x ./autogen.sh
 ./autogen.sh --prefix=%{_prefix} -localedir=%{_prefix}/share/locale
 
 make %{?jobs:-j%jobs}
@@ -76,7 +77,7 @@ cp -a %{SOURCE1} %{buildroot}%{_datadir}/binary_package_name.manifest
 %manifest %{_datadir}/binary_package_name.manifest
 %{_prefix}/lib/libcryptsetup.so
 %{_prefix}/lib/libcryptsetup.so.4
-%{_prefix}/lib/libcryptsetup.so.4.5.0
+%{_prefix}/lib/libcryptsetup.so.4.7.0
 %{_prefix}/sbin/cryptsetup
 %{_prefix}/sbin/veritysetup
 
@@ -97,6 +98,7 @@ cp -a %{SOURCE1} %{buildroot}%{_datadir}/binary_package_name.manifest
 %{_prefix}/share/locale/sv/LC_MESSAGES/cryptsetup.mo
 %{_prefix}/share/locale/uk/LC_MESSAGES/cryptsetup.mo
 %{_prefix}/share/locale/vi/LC_MESSAGES/cryptsetup.mo
+%{_prefix}/share/locale/es/LC_MESSAGES/cryptsetup.mo
 
 %files doc
 %{_prefix}/share/man/man8/cryptsetup.8.gz
