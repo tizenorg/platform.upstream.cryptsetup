@@ -2,7 +2,7 @@ Name:     cryptsetup
 Summary:  The cryptsetup
 Version:  1.6.7
 Release:  1
-License:  GPL-2.0
+License:  GPL-2.0+
 Group:    Base/Device Management
 URL:      http://code.google.com/p/cryptsetup/
 Source0:  %{name}-%{version}.tar.xz
@@ -35,7 +35,7 @@ Requires:   %{name} = %{version}-%{release}
 cryptsetup development package
 
 %package locale
-License:    GPL-2.0
+License:    GPL-2.0+
 Summary:    The cryptsetup locale package
 Group:      Base/Device Management
 Requires:   %{name} = %{version}-%{release}
@@ -44,7 +44,7 @@ Requires:   %{name} = %{version}-%{release}
 locale package for cryptsetup
 
 %package doc 
-License:    GPL-2.0
+License:    GPL-2.0+
 Summary:    The cryptsetup doc package
 Group:      Base/Device Management
 Requires:   %{name} = %{version}-%{release}
